@@ -33,22 +33,21 @@ sub _wrap ($)
 {
     return unless defined wantarray;
 
-    my $ref = shift;
-
-    my $type = ref ${$ref};
+    my $type = ref $_[0];
     if (!$type || exists $JSON::Sugar::Boolean{$type}) {
         print "TIE\n";
         tie my $v,
             'JSON::Sugar::Scalar',
-            $ref;
+            \$_[0];  # Use the original ref
         return $v
     }
+    print "REF: $type\n";
 
-    # HASH
-    return bless $ref, 'JSON::Sugar::HASH' if $type eq 'HASH';
+    # HASH: copy the ref, and bless it
+    return bless \(my $ref = $_[0]), 'JSON::Sugar::HASH' if $type eq 'HASH';
 
     # ARRAY
-    tie my @arr, 'JSON::Sugar::ARRAY', $ref;
+    tie my @arr, 'JSON::Sugar::ARRAY', $_[0];
     \@arr
 }
 
@@ -145,6 +144,7 @@ sub AUTOLOAD
     #Test::More::note Test::More::explain $hash;
     our $AUTOLOAD;
     my $prop = substr($AUTOLOAD, 1+rindex($AUTOLOAD, ':'));
+    print "XXX\n";
     if (@_ > 1) {
         print "STORE property $prop\n";
         $hash->{$prop} = $_[1];
@@ -155,21 +155,30 @@ sub AUTOLOAD
             [ $hash, $prop ];
         return $v
     }
-    JSON::Sugar::_wrap(\$hash->{$prop});
+    JSON::Sugar::_wrap($hash->{$prop});
 }
 
 package JSON::Sugar::ARRAY;
 
 sub TIEARRAY
 {
-    my ($class, $storage) = @_;
+    my ($class, $arr) = @_;
     print "TIEARRAY\n";
-    bless $storage, $class
+    bless \$arr, $class
 }
 
 sub FETCH
 {
-    JSON::Sugar::_wrap(\(my $x = ${ $_[0] }->[ $_[1] ]))
+    my ($arr, $index) = (${$_[0]}, $_[1]);
+
+    if ($index <= $#$arr) {
+        JSON::Sugar::_wrap($arr->[ $index ])
+    } else {
+        tie my $v,
+            'JSON::Sugar::New',
+            [ $arr, $index ];
+        return $v
+    }
 }
 
 sub STORE
@@ -179,7 +188,7 @@ sub STORE
 
 sub FETCHSIZE
 {
-    scalar @{ $_[0] }
+    scalar @{ ${ $_[0] } }
 }
 
 sub STORESIZE
@@ -236,21 +245,21 @@ sub TIESCALAR
 {
     my ($class, $storage) = @_;
     print "TIESCALAR ${$storage}\n";
-    bless $storage, $class
+    bless \$storage, $class
 }
 
 sub STORE
 {
     my ($self, $value) = @_;
     print "STORE $value\n";
-    ${$self} = $value;
+    ${${$self}} = $value;
 }
 
 sub FETCH
 {
     my ($self) = @_;
     print "FETCH\n";
-    return ${$self}
+    return ${${$self}}
 }
 
 sub DESTROY {}
@@ -262,12 +271,12 @@ sub AUTOLOAD
     print "$AUTOLOAD\n";
     my $prop = substr($AUTOLOAD, 1+rindex($AUTOLOAD, ':'));
     if ($prop =~ /^(?:[1-9][0-9]*|0)\z/) { # Array index?
-        ${$self} = [];
-        tie my @arr, 'JSON::Sugar::ARRAY', ${$self};
+        ${${$self}} = my $a = [];
+        tie my @arr, 'JSON::Sugar::ARRAY', $a;
         return \@arr
     } else {
-        ${$self} = {};
-        return bless \${$self}, 'JSON::Sugar::HASH'
+        ${${$self}} = my $h = {};
+        return bless \$h, 'JSON::Sugar::HASH'
     }
 }
 
