@@ -5,6 +5,7 @@ use Test::More;
 
 use JSON; # For JSON::true
 use JSON::Sugar 'json_sugar';
+use Carp::Always;
 
 my $data = [
     5,
